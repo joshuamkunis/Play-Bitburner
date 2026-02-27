@@ -27,7 +27,7 @@ export async function main(ns) {
 
     if (!ns.fileExists(solverFile, "home")) {
       skipped++;
-      ns.tprint("Missing solver: " + solverFile)
+      ns.tprint("❓ Missing solver: " + solverFile)
       continue;
     }
 
@@ -36,6 +36,8 @@ export async function main(ns) {
 
     await ns.write(inputFile, JSON.stringify(data), "w");
     await ns.rm(outputFile, "home");
+
+    ns.print("Attempting to solve " + type + " @ " + c.server + " (tries left: " + tries + ")");
 
     const pid = ns.exec(solverFile, "home", 1, inputFile, outputFile);
     if (pid === 0) {

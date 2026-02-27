@@ -6,30 +6,43 @@ export async function main(ns) {
     const grid = JSON.parse(ns.read(inputFile));
 
     if (!grid || grid.length === 0 || grid[0].length === 0) {
-        await ns.write(outputFile, JSON.stringify(0), "w");
+        await ns.write(outputFile, JSON.stringify(""), "w");
         return;
     }
 
     const rows = grid.length;
     const cols = grid[0].length;
 
-    // use a single array for dp to save space
-    const dp = new Array(cols).fill(0);
+    // BFS to find shortest path
+    // direction: 0=U, 1=D, 2=L, 3=R
+    const directions = [[-1, 0, 'U'], [1, 0, 'D'], [0, -1, 'L'], [0, 1, 'R']];
+    
+    const queue = [[0, 0, '']]; // [row, col, path]
+    const visited = new Set(['0,0']);
 
-    // initialize first cell
-    dp[0] = grid[0][0];
-    // first row
-    for (let j = 1; j < cols; j++) {
-        dp[j] = dp[j - 1] + grid[0][j];
-    }
+    while (queue.length > 0) {
+        const [row, col, path] = queue.shift();
 
-    for (let i = 1; i < rows; i++) {
-        // update first column for this row
-        dp[0] = dp[0] + grid[i][0];
-        for (let j = 1; j < cols; j++) {
-            dp[j] = Math.min(dp[j - 1], dp[j]) + grid[i][j];
+        // reached destination
+        if (row === rows - 1 && col === cols - 1) {
+            await ns.write(outputFile, JSON.stringify(path), "w");
+            return;
+        }
+
+        // try all 4 directions
+        for (const [dr, dc, dir] of directions) {
+            const newRow = row + dr;
+            const newCol = col + dc;
+            const key = `${newRow},${newCol}`;
+
+            if (newRow >= 0 && newRow < rows && newCol >= 0 && newCol < cols && 
+                grid[newRow][newCol] === 0 && !visited.has(key)) {
+                visited.add(key);
+                queue.push([newRow, newCol, path + dir]);
+            }
         }
     }
 
-    await ns.write(outputFile, JSON.stringify(dp[cols - 1]), "w");
+    // no path found
+    await ns.write(outputFile, JSON.stringify(""), "w");
 }
