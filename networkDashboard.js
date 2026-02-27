@@ -51,8 +51,45 @@ export async function main(ns) {
     }).join("");
   }
 
-  while (true) {
+  // helpers for Unicode bars/padding
+  function bar(pct, width = 20) {
+    const filled = Math.round((pct / 100) * width);
+    const empty = width - filled;
+    return "█".repeat(filled) + "░".repeat(empty);
+  }
 
+  function pad(str, len) {
+    return str + " ".repeat(Math.max(0, len - str.length));
+  }
+
+  // ─── new helpers to keep everything the same width ──────────
+  const WIDTH = ("╔════════════════════════════════════════════════════════════════════════╗").length;
+
+  function centre(str, innerWidth = WIDTH - 2) {
+    const padTotal = innerWidth - str.length;
+    const left = Math.floor(padTotal / 2);
+    const right = padTotal - left;
+    return " ".repeat(left) + str + " ".repeat(right);
+  }
+
+  function topBorder() {
+    return "╔" + "═".repeat(WIDTH - 2) + "╗";
+  }
+
+  function bottomBorder() {
+    return "╚" + "═".repeat(WIDTH - 2) + "╝";
+  }
+
+  function sectionBorder() {
+    return "┌" + "─".repeat(WIDTH - 2) + "┐";
+  }
+
+  function sectionFooter() {
+    return "└" + "─".repeat(WIDTH - 2) + "┘";
+  }
+  // ────────────────────────────────────────────────────────────
+
+  while (true) {
     ns.clearLog();
     const servers = scanAll();
     const now = Date.now(); // timestamp for any activity we detect
@@ -75,6 +112,11 @@ export async function main(ns) {
     let weakenRam = 0;
     let shareRam = 0;
 
+    // track targets
+    const hackTargets = new Set();
+    const growTargets = new Set();
+    const weakenTargets = new Set();
+
     for (const s of servers) {
       if (!ns.hasRootAccess(s)) continue;
 
@@ -93,23 +135,23 @@ export async function main(ns) {
         else if (p.filename.includes("weaken")) weakenRam += ram;
         else if (p.filename.includes("share")) shareRam += ram;
 
-        // if this script is targeting another server, mark that target as active
-        if ((p.filename.includes("hack") || p.filename.includes("grow") || p.filename.includes("weaken")) && p.args && p.args.length > 0) {
+        if ((p.filename.includes("hack") || p.filename.includes("grow") || p.filename.includes("weaken")) &&
+            p.args && p.args.length > 0) {
           const tgt = p.args[0];
-          // record the time we last saw this target mentioned
           activeTargets[tgt] = now;
+          if (p.filename.includes("hack")) hackTargets.add(tgt);
+          else if (p.filename.includes("grow")) growTargets.add(tgt);
+          else if (p.filename.includes("weaken")) weakenTargets.add(tgt);
         }
       }
     }
 
     const freeRam = totalRam - usedRam;
-
     const pct = (x) => totalRam === 0 ? 0 : ((x / totalRam) * 100);
 
     // === SERVER CHANGE TRACKING ===
 
     for (const s of servers) {
-
       if (!ns.hasRootAccess(s)) continue;
       if (ns.getServerMaxMoney(s) === 0) continue;
 
@@ -122,31 +164,21 @@ export async function main(ns) {
       }
 
       const prev = lastSnapshot[s];
-
       const moneyChanged = money !== prev.money;
       const secChanged = sec !== prev.sec;
+      if (moneyChanged || secChanged) activeTargets[s] = now;
 
-      if (moneyChanged || secChanged) {
-        activeTargets[s] = now;
-      }
-
-      // Always store rolling history
       history[s].push({ money, sec });
-
-      if (history[s].length > SERVER_HISTORY)
-        history[s].shift();
-
-      // Update snapshot
+      if (history[s].length > SERVER_HISTORY) history[s].shift();
       lastSnapshot[s] = { money, sec };
     }
 
     // === DASHBOARD OUTPUT ===
 
-    ns.print("╔══════════════════════════════════════════════════════════════╗");
-    ns.print("║                    NETWORK OPERATIONS DASHBOARD              ║");
-    ns.print("╚══════════════════════════════════════════════════════════════╝");
+    ns.print(topBorder());
+    ns.print("║" + centre("NETWORK OPERATIONS DASHBOARD") + "║");
+    ns.print(bottomBorder());
 
-    // Income
     ns.print("");
     ns.print("📈 Income / sec (delta over time)");
     if (incomeHistory.length > 1) {
@@ -154,57 +186,77 @@ export async function main(ns) {
     }
     ns.print("  Current: " + formatMoney(currentIncome) + "/sec");
 
-    // === RAM ===
     ns.print("");
     ns.print("💾 RAM Usage");
+    // make sure the bars all start in the same column
+    const ramLabels = ["Home:", "Network:"];
+    const ramLabelWidth = Math.max(...ramLabels.map(l => l.length));
 
-    // --- HOME ---
     const homeMax = ns.getServerMaxRam("home");
     const homeUsed = ns.getServerUsedRam("home");
     const homeFree = homeMax - homeUsed;
     const homeFreePct = homeMax === 0 ? 0 : (homeFree / homeMax) * 100;
-
     ns.print(
-      "  Home:     " +
-      formatRam(homeFree) +
-      " (" + homeFreePct.toFixed(1) + "%) Free | " +
-      formatRam(homeUsed) + " / " +
-      formatRam(homeMax)
+      "  " + pad("Home:", ramLabelWidth) +
+        " [" + bar(homeFreePct) + "] " +
+        homeFreePct.toFixed(1) + "% free (" +
+        formatRam(homeFree) + " / " + formatRam(homeMax) + ")"
     );
 
-    // --- NETWORK ---
     const netFree = totalRam - usedRam;
     const netFreePct = totalRam === 0 ? 0 : (netFree / totalRam) * 100;
-
     ns.print(
-      "  Network:  " +
-      formatRam(netFree) +
-      " (" + netFreePct.toFixed(1) + "%) Free | " +
-      formatRam(usedRam) + " / " +
-      formatRam(totalRam)
+      "  " + pad("Network:", ramLabelWidth) +
+        " [" + bar(netFreePct) + "] " +
+        netFreePct.toFixed(1) + "% free (" +
+        formatRam(netFree) + " / " + formatRam(totalRam) + ")"
     );
 
-    // Script breakdown
     ns.print("");
     ns.print("⚙️ Script RAM Allocation");
-    ns.print("  Hack   : " + pct(hackRam).toFixed(1) + "%");
-    ns.print("  Grow   : " + pct(growRam).toFixed(1) + "%");
-    ns.print("  Weaken : " + pct(weakenRam).toFixed(1) + "%");
-    ns.print("  Share  : " + pct(shareRam).toFixed(1) + "%");
+    // align the script labels as well
+    const scriptLabels = ["Hack   :", "Grow   :", "Weaken :", "Share  :"];
+    const scriptLabelWidth = Math.max(...scriptLabels.map(l => l.length));
+    // fixed width for the percentage column – large enough for "100.0%"
+    const pctWidth = 6;
 
-    // === ACTIVE TARGETS DISPLAY ===
+    function pctStr(val) {
+      return (pct(val).toFixed(1) + "%").padStart(pctWidth);
+    }
+
+    ns.print(
+      "  " + pad("Hack   :", scriptLabelWidth) +
+        " " + pctStr(hackRam) + " [" + bar(pct(hackRam)) + "]" +
+        (hackTargets.size ? " targets: " + [...hackTargets].join(", ") : "")
+    );
+    ns.print(
+      "  " + pad("Grow   :", scriptLabelWidth) +
+        " " + pctStr(growRam) + " [" + bar(pct(growRam)) + "]" +
+        (growTargets.size ? " targets: " + [...growTargets].join(", ") : "")
+    );
+    ns.print(
+      "  " + pad("Weaken :", scriptLabelWidth) +
+        " " + pctStr(weakenRam) + " [" + bar(pct(weakenRam)) + "]" +
+        (weakenTargets.size ? " targets: " + [...weakenTargets].join(", ") : "")
+    );
+    ns.print(
+      "  " + pad("Share  :", scriptLabelWidth) +
+        " " + pctStr(shareRam) + " [" + bar(pct(shareRam)) + "]"
+    );
+
     ns.print("");
-    ns.print("🧠 Active Target Servers");
+    ns.print(sectionBorder());
+    ns.print("│" + centre("Active Target Servers") + "│");
+    ns.print(sectionFooter());
 
     const recentlyActive = Object.entries(activeTargets)
       .filter(([_, timestamp]) => now - timestamp <= CHANGE_WINDOW)
       .map(([name]) => name);
 
     if (recentlyActive.length === 0) {
-      ns.print("  (No recent changes detected)");
+      ns.print("  (no recent changes)");
     } else {
       for (const name of recentlyActive) {
-        // current metrics
         const money = ns.getServerMoneyAvailable(name);
         const maxMoney = ns.getServerMaxMoney(name);
         const sec = ns.getServerSecurityLevel(name);
@@ -213,20 +265,16 @@ export async function main(ns) {
         const moneyPct = maxMoney === 0 ? 0 : (money / maxMoney) * 100;
         const secPct = minSec === 0 ? 0 : (sec / minSec) * 100;
 
-        // print header line with numeric values and percentages
-        // pad fields to keep columns roughly aligned
-        const namePad = name.padEnd(15);
+        const namePad = pad(name, 15);
         const moneyStr = ns.formatNumber(money).padStart(12);
         const secStr = sec.toFixed(2).padStart(6);
-        ns.print(
-          "  " + namePad +
-            " $" + moneyStr +
-            " (" + moneyPct.toFixed(1) + "%)" +
-            "  S:" + secStr +
-            " (" + secPct.toFixed(1) + "%)"
-        );
 
-        // also show history graphs if we have them
+        ns.print("  " + namePad +
+          " $" + moneyStr +
+          " (" + moneyPct.toFixed(1) + "%)" +
+          "  S:" + secStr +
+          " (" + secPct.toFixed(1) + "%)");
+
         const serverHistory = history[name];
         if (serverHistory && serverHistory.length >= 2) {
           const moneyGraph = sparkline(serverHistory.map(h => h.money));
