@@ -34,7 +34,14 @@ export async function main(ns) {
     const inputFile = `/tmp_contract_input.txt`;
     const outputFile = `/tmp_contract_output.txt`;
 
-    await ns.write(inputFile, JSON.stringify(data), "w");
+    // `data` can be a BigInt for some contracts (e.g. Square Root).
+    // JSON.stringify throws on BigInt, so write plain decimal string
+    // when we receive a BigInt; otherwise write JSON.
+    if (typeof data === "bigint") {
+      await ns.write(inputFile, data.toString(), "w");
+    } else {
+      await ns.write(inputFile, JSON.stringify(data), "w");
+    }
     await ns.rm(outputFile, "home");
 
     ns.print("Attempting to solve " + type + " @ " + c.server + " (tries left: " + tries + ")");
@@ -57,7 +64,28 @@ export async function main(ns) {
       continue;
     }
 
-    const answer = JSON.parse(ns.read(outputFile));
+    const rawOutput = ns.read(outputFile).trim();
+    let answer;
+
+    // If the solver wrote a plain decimal integer string (no quotes),
+    // keep it as a string to preserve arbitrary precision required by
+    // contracts like Square Root. JSON.parse will coerce large
+    // integers to Number (and scientific notation), which loses precision
+    // and can later fail when converting to BigInt.
+    if (/^-?\d+$/.test(rawOutput)) {
+      answer = rawOutput;
+    } else {
+      try {
+        answer = JSON.parse(rawOutput);
+      } catch (e) {
+        answer = rawOutput;
+      }
+    }
+
+    // Normalize primitive numeric types to decimal string if present.
+    if (typeof answer === "number" || typeof answer === "bigint") {
+      answer = answer.toString();
+    }
 
     const reward = ns.codingcontract.attempt(
       answer,
