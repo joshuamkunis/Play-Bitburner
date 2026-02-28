@@ -227,17 +227,17 @@ export async function main(ns) {
     ns.print(
       "  " + pad("Hack   :", scriptLabelWidth) +
         " " + pctStr(hackRam) + " [" + bar(pct(hackRam)) + "]" +
-        (hackTargets.size ? " targets: " + [...hackTargets].join(", ") : "")
+        (hackTargets.size ? " | " + [...hackTargets].join(", ") : "")
     );
     ns.print(
       "  " + pad("Grow   :", scriptLabelWidth) +
         " " + pctStr(growRam) + " [" + bar(pct(growRam)) + "]" +
-        (growTargets.size ? " targets: " + [...growTargets].join(", ") : "")
+        (growTargets.size ? " | " + [...growTargets].join(", ") : "")
     );
     ns.print(
       "  " + pad("Weaken :", scriptLabelWidth) +
         " " + pctStr(weakenRam) + " [" + bar(pct(weakenRam)) + "]" +
-        (weakenTargets.size ? " targets: " + [...weakenTargets].join(", ") : "")
+        (weakenTargets.size ? " | " + [...weakenTargets].join(", ") : "")
     );
     ns.print(
       "  " + pad("Share  :", scriptLabelWidth) +
