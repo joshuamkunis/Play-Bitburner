@@ -12,11 +12,13 @@ export async function main(ns) {
   const CHANGE_WINDOW = 20000; // show servers changed in last 20s
 
   let incomeHistory = [];
-  let serverStats = {};
   let lastIncome = ns.getTotalScriptIncome()[0];
   let lastSnapshot = {};
   let history = {};
   let activeTargets = {};
+  // track when we first saw each running process so we can estimate remaining time
+  let processStart = {};    // key: "host:pid" -> timestamp
+
 
   function scanAll() {
     const visited = new Set();
@@ -40,20 +42,12 @@ export async function main(ns) {
     return ns.formatRam(n);
   }
 
-  function sparkline(data) {
-    const ticks = "▁▂▃▄▅▆▇█";
-    const min = Math.min(...data);
-    const max = Math.max(...data);
-    const range = max - min || 1;
-    return data.map(v => {
-      const i = Math.floor(((v - min) / range) * (ticks.length - 1));
-      return ticks[i];
-    }).join("");
-  }
 
   // helpers for Unicode bars/padding
   function bar(pct, width = 20) {
-    const filled = Math.round((pct / 100) * width);
+    // ensure pct is between 0 and 100 to avoid negative repeats
+    const clamped = Math.max(0, Math.min(100, pct));
+    const filled = Math.round((clamped / 100) * width);
     const empty = width - filled;
     return "█".repeat(filled) + "░".repeat(empty);
   }
@@ -117,6 +111,9 @@ export async function main(ns) {
     const growTargets = new Set();
     const weakenTargets = new Set();
 
+    // for RAM timer calculation
+    const currentPids = new Set();
+
     for (const s of servers) {
       if (!ns.hasRootAccess(s)) continue;
 
@@ -129,6 +126,24 @@ export async function main(ns) {
       const processes = ns.ps(s);
       for (const p of processes) {
         const ram = ns.getScriptRam(p.filename, s) * p.threads;
+
+        // record process start time and estimate remaining
+        const key = `${s}:${p.pid}`;
+        currentPids.add(key);
+        if (!processStart[key]) processStart[key] = now;
+        // determine expected duration based on script type
+        let duration = 0;
+        const tgt = p.args && p.args.length > 0 ? p.args[0] : null;
+        if (p.filename.includes("hack") && tgt) duration = ns.getHackTime(tgt);
+        else if (p.filename.includes("grow") && tgt) duration = ns.getGrowTime(tgt);
+        else if (p.filename.includes("weaken") && tgt) duration = ns.getWeakenTime(tgt);
+        else if (p.filename.includes("share")) {
+          if (ns.getShareTime) {
+            duration = ns.getShareTime();
+          }
+        }
+        const elapsed = now - processStart[key];
+        const remaining = Math.max(0, duration - elapsed);
 
         if (p.filename.includes("hack")) hackRam += ram;
         else if (p.filename.includes("grow")) growRam += ram;
@@ -180,10 +195,7 @@ export async function main(ns) {
     ns.print(bottomBorder());
 
     ns.print("");
-    ns.print("📈 Income / sec (delta over time)");
-    if (incomeHistory.length > 1) {
-      ns.print("  " + sparkline(incomeHistory));
-    }
+    ns.print("📈 Income / sec");
     ns.print("  Current: " + formatMoney(currentIncome) + "/sec");
 
     ns.print("");
@@ -227,17 +239,17 @@ export async function main(ns) {
     ns.print(
       "  " + pad("Hack   :", scriptLabelWidth) +
         " " + pctStr(hackRam) + " [" + bar(pct(hackRam)) + "]" +
-        (hackTargets.size ? " | " + [...hackTargets].join(", ") : "")
+        (hackTargets.size ? " " + [...hackTargets].join(", ") : "")
     );
     ns.print(
       "  " + pad("Grow   :", scriptLabelWidth) +
         " " + pctStr(growRam) + " [" + bar(pct(growRam)) + "]" +
-        (growTargets.size ? " | " + [...growTargets].join(", ") : "")
+        (growTargets.size ? " " + [...growTargets].join(", ") : "")
     );
     ns.print(
       "  " + pad("Weaken :", scriptLabelWidth) +
         " " + pctStr(weakenRam) + " [" + bar(pct(weakenRam)) + "]" +
-        (weakenTargets.size ? " | " + [...weakenTargets].join(", ") : "")
+        (weakenTargets.size ? " " + [...weakenTargets].join(", ") : "")
     );
     ns.print(
       "  " + pad("Share  :", scriptLabelWidth) +
@@ -264,26 +276,25 @@ export async function main(ns) {
 
         const moneyPct = maxMoney === 0 ? 0 : (money / maxMoney) * 100;
         const secPct = minSec === 0 ? 0 : (sec / minSec) * 100;
-
-        const namePad = pad(name, 15);
-        const moneyStr = ns.formatNumber(money).padStart(12);
-        const secStr = sec.toFixed(2).padStart(6);
-
-        ns.print("  " + namePad +
-          " $" + moneyStr +
-          " (" + moneyPct.toFixed(1) + "%)" +
-          "  S:" + secStr +
-          " (" + secPct.toFixed(1) + "%)");
-
-        const serverHistory = history[name];
-        if (serverHistory && serverHistory.length >= 2) {
-          const moneyGraph = sparkline(serverHistory.map(h => h.money));
-          const secGraph = sparkline(serverHistory.map(h => h.sec));
-          ns.print("    $ " + moneyGraph);
-          ns.print("    S " + secGraph);
+        // compute security bar percentage: 0 at 100% min, full at 500% min
+        let secBarPct = 0;
+        if (secPct > 100) {
+          secBarPct = ((secPct - 100) / 400) * 100;
         }
+        if (secBarPct > 100) secBarPct = 100;
+
+        const moneyStr = ns.formatNumber(money);
+        const secStr = sec.toFixed(2);
+        
+        // Line 1: Server name
+        ns.print("  " + name);
+        // Line 2: Money graph, value, percentage
+        ns.print("    $" + bar(moneyPct) + " $" + moneyStr + " (" + moneyPct.toFixed(1) + "%)");
+        // Line 3: Security graph, value, percentage
+        ns.print("    S" + bar(secBarPct) + " S:" + secStr + " (" + secPct.toFixed(1) + "%)");
       }
     }
+
 
     await ns.sleep(INTERVAL);
   }
